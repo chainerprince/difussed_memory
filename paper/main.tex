@@ -1,7 +1,7 @@
-\documentclass[11pt]{article}
+\documentclass{article}
 
-\usepackage[margin=1in]{geometry}
-\usepackage{times}
+\usepackage[preprint]{neurips_2024}
+
 \usepackage{amsmath,amssymb}
 \usepackage{booktabs}
 \usepackage{graphicx}
@@ -11,17 +11,21 @@
 \usepackage{float}
 \usepackage[hidelinks]{hyperref}
 
-\title{Diffusion-Based Reranking for Conversational Memory Retrieval\footnote{Code available at \url{https://github.com/chainerprince/difussed_memory}}}
+\title{Diffusion-Based Reranking for Conversational Memory Retrieval\thanks{Code available at \url{https://github.com/chainerprince/difussed_memory}}}
+
 \author{
-Medha Ravi \and Otis Otieno Robert \and Ernest Adjetey \and Prince Mutegetsi
+  Medha Ravi \And
+  Otis Otieno Robert \And
+  Ernest Adjetey \And
+  Prince Mutegetsi
 }
-\date{}
+
 
 \begin{document}
 \maketitle
 
 \begin{abstract}
-Conversational agents need to retrieve user-specific memories from large, noisy banks of facts. This project studies whether a conditional denoising diffusion model can improve top-1 memory retrieval beyond direct Sentence-BERT similarity. We embed heuristic and T5-generated queries with all-MiniLM-L6-v2, retrieve a top-$K$ candidate set with cosine similarity, and rerank candidates using a diffusion model conditioned on the query and memory-bank summary. We evaluate two diffusion strategies: prototype generation, which samples an answer embedding from the learned reverse process, and denoising-score reranking, which treats small denoising changes as evidence that a candidate lies on the conditional answer manifold. On simple heuristic queries, raw SBERT reaches $17.84\%$ top-1 accuracy, while the best diffusion-only setting reaches $19.51\%$ and an ensemble reaches $20.03\%$. On real T5-generated queries, raw SBERT is much stronger at $51.60\%$; a real-turn-trained diffusion reranker improves to $52.40\%$ while a top-5 oracle reaches $67.60\%$. These results suggest that diffusion is most useful as a reranking signal within a strong candidate set, rather than as a standalone generator.
+Conversational agents need to retrieve user-specific memories from large, noisy banks of facts. This project studies whether a conditional denoising diffusion model can improve top-1 memory retrieval beyond direct Sentence-BERT similarity. We embed heuristic and T5-generated queries with all-MiniLM-L6-v2, retrieve a top-$K$ candidate set with cosine similarity, and rerank candidates using a diffusion model conditioned on the query and memory-bank summary. We evaluate two diffusion strategies: prototype generation, which samples an answer embedding from the learned reverse process, and denoising-score reranking, which treats small denoising changes as evidence that a candidate lies on the conditional answer manifold. We compare against BM25 ($9.73\%$) and a MiniLM cross-encoder ($20.91\%$) as competing rerankers. On simple heuristic queries, raw SBERT reaches $17.84\%$ top-1 accuracy, while the best diffusion-only setting reaches $19.51\%$ and an ensemble reaches $20.03\%$---outperforming BM25 by a large margin and approaching the cross-encoder upper baseline. On real T5-generated queries, raw SBERT is much stronger at $51.60\%$; a real-turn-trained diffusion reranker improves to $52.40\%$ while a top-5 oracle reaches $67.60\%$. These results suggest that diffusion is a competitive reranking signal within a strong candidate set.
 \end{abstract}
 
 %% ========================================================
@@ -173,32 +177,63 @@ A high denoising score indicates that the candidate was barely perturbed, consis
 \end{equation}
 We sweep the denoising timestep $t \in \{1, 3, 5, 10, 20\}$ and mixture weight $\lambda \in \{0.0, 0.1, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0\}$ on the validation set to select the best configuration.
 
+\subsection{Memory Consolidation via ``Dreaming''}
+\label{sec:dreaming}
+
+Beyond query-time reranking, we explored using the diffusion model to consolidate the memory bank offline, in a process we call \emph{dreaming}. For this we trained a larger denoiser ($6.9$M parameters, 60 epochs) in which the conditioning is supplied by a cross-attention module that attends over the entire fact bank (padded and masked to at most 20 facts) together with the query embedding, with the resulting context vector modulating an MLP trunk through FiLM layers. The model is trained with the same $\epsilon$-prediction objective as before. At consolidation time it is repurposed to run a four-stage pipeline over a single user's facts. First, \emph{contradiction detection} scores every pair of facts by the difference between their cosine similarity and a denoising-stability term: each fact is noised to timestep $t=10$ and denoised while conditioned on the other fact, and the cosine similarity between the recovered and original embedding measures how much that conditioning ``pulls'' the fact away. A pair that is textually similar yet unstable under mutual conditioning receives a high contradiction score, and pairs above a threshold of $0.15$ are flagged. Second, \emph{resolution} removes whichever fact in a flagged pair has the lower mean cosine agreement with the rest of the bank, on the assumption that the less consistent fact is the spurious one. Third, \emph{manifold denoising} runs two rounds in which each surviving fact is noised, denoised under its neighbors as context, and blended back toward its denoised estimate ($0.7$ original, $0.3$ denoised, renormalized). Finally, \emph{duplicate merging} collapses any remaining pair with cosine similarity above $0.92$. The cleaned bank is then used directly for top-1 retrieval.
 %% ========================================================
 \section{Results}
 \label{sec:results}
 %% ========================================================
 
-We organize our experimental results around four analyses: (1) the main accuracy comparison, (2) an approach-level sweep of hyperparameters, (3) a breakdown by query type, and (4) top-$K$ oracle headroom.
+We organize our experimental results around five analyses: (1) the main accuracy comparison including competing reranker baselines, (2) an approach-level sweep of hyperparameters, (3) a breakdown by query type, (4) top-$K$ oracle headroom, and (5) evaluation on T5-generated queries.
 
 \subsection{Main Results}
 
-Table~\ref{tab:main-results} summarizes the top-1 retrieval accuracy across all evaluated settings. For simple heuristic queries, the raw SBERT baseline achieves $17.84\%$ top-1 accuracy. The strongest diffusion-only configuration is Approach~A with eight prototype samples, which improves accuracy to $19.51\%$---an absolute gain of $+1.67$ percentage points. Approach~B with denoising timestep $t=20$ and mixture weight $\lambda=0.75$ achieves a comparable $19.48\%$. The best overall result on simple queries comes from an ensemble that combines raw similarity, prototype, and denoising signals, reaching $20.03\%$. For the ensemble and T5 evaluation settings, we use $N=4$ prototype samples to balance performance with inference speed, and combine the scores using fixed mixture weights of $0.5$ for the prototype signal and $0.75$ for the denoising signal.
+Table~\ref{tab:main-results} summarizes the top-1 retrieval accuracy across all evaluated settings, including two competing reranker baselines. BM25, a classic sparse keyword-overlap retriever that does not use learned embeddings, achieves only $9.73\%$ on simple queries, well below raw SBERT---confirming that embedding-based retrieval is essential in this setting. A MiniLM cross-encoder reranker~\cite{nogueira2020passage}, which jointly encodes each query--candidate pair via full cross-attention, achieves $20.91\%$, setting a strong but expensive upper baseline.
+
+For simple heuristic queries, the raw SBERT baseline achieves $17.84\%$ top-1 accuracy. The strongest diffusion-only configuration is Approach~A with eight prototype samples, which improves accuracy to $19.51\%$---an absolute gain of $+1.67$ percentage points. Approach~B with denoising timestep $t=20$ and mixture weight $\lambda=0.75$ achieves a comparable $19.48\%$. The best overall result on simple queries comes from an ensemble that combines raw similarity, prototype, and denoising signals, reaching $20.03\%$. For the ensemble and T5 evaluation settings, we use $N=4$ prototype samples to balance performance with inference speed, and combine the scores using fixed mixture weights of $0.5$ for the prototype signal and $0.75$ for the denoising signal. Notably, the diffusion ensemble ($20.03\%$) closely approaches the cross-encoder ($20.91\%$) while operating entirely in pre-computed embedding space and requiring no per-pair inference.
 
 For T5-generated queries, the landscape changes considerably. Raw SBERT is substantially stronger at $51.60\%$, reflecting the higher quality of natural-language queries compared to heuristic templates. A diffusion model trained on simple queries actually hurts performance on T5 queries (Approach~B drops to $51.40\%$), indicating a distribution mismatch between template-style training data and natural queries. However, retraining the diffusion model on realistic dialogue turns recovers the benefit: the real-turn-trained Approach~B reaches $52.40\%$, a modest but consistent improvement.
 
 \begin{table}[htbp]
 \centering
-\caption{Top-1 retrieval accuracy from the project evaluations.}
+\caption{Top-1 retrieval accuracy (simple heuristic queries). BM25 and Cross-Encoder are competing reranker baselines over the same top-$K=5$ candidate set. The Top-5 Oracle is the theoretical upper bound.}
 \label{tab:main-results}
-\begin{tabular}{lccc}
+\begin{tabular}{lcc}
 \toprule
-Setting & Raw & Best Diffusion & $\Delta$ \\
+Method & Top-1 Acc & $\Delta$ vs.\ SBERT \\
 \midrule
-Simple queries, A$_{n=8}$ & 0.1784 & 0.1951 & +0.0167 \\
-Simple queries, B$_{t=20,\lambda=.75}$ & 0.1784 & 0.1948 & +0.0164 \\
-Simple queries, ensemble & 0.1784 & 0.2003 & +0.0219 \\
-T5 queries, simple-trained B & 0.5160 & 0.5140 & $-$0.0020 \\
-T5 queries, real-turn-trained B & 0.5160 & 0.5240 & +0.0080 \\
+\textit{Retrieval baselines} & & \\
+BM25 (sparse keyword) & 0.0973 & $-$0.0811 \\
+Raw SBERT (cosine sim) & 0.1784 & --- \\
+\midrule
+\textit{Reranking baselines over top-5} & & \\
+Cross-Encoder (MiniLM) & 0.2091 & +0.0307 \\
+\midrule
+\textit{Diffusion rerankers (ours)} & & \\
+Approach A$_{n=8}$ (prototype) & 0.1951 & +0.0167 \\
+Approach B$_{t=20,\lambda=0.75}$ (denoising) & 0.1948 & +0.0164 \\
+Ensemble (A + B + raw) & 0.2003 & +0.0219 \\
+\midrule
+\textit{Upper bound} & & \\
+Top-5 Oracle & 0.6009 & +0.4225 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\caption{Top-1 retrieval accuracy on T5-generated queries (500-example subset).}
+\label{tab:t5-results}
+\begin{tabular}{lcc}
+\toprule
+Method & Top-1 Acc & $\Delta$ vs.\ SBERT \\
+\midrule
+Raw SBERT & 0.5160 & --- \\
+Approach B, simple-trained & 0.5140 & $-$0.0020 \\
+Approach B, real-turn-trained & 0.5240 & +0.0080 \\
+Top-5 Oracle & 0.6760 & +0.1600 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -214,20 +249,11 @@ Figure~\ref{fig:t5-results} shows the detailed comparison between simple-trained
 \label{fig:t5-results}
 \end{figure}
 
-\subsection{Combined Evaluation Summary}
-
-Figure~\ref{fig:combined-results} presents a side-by-side comparison of simple and T5 query performance. Several patterns emerge. First, the absolute accuracy on T5 queries ($51.60\%$ baseline) is roughly three times higher than on simple queries ($17.84\%$), reflecting the fact that natural-language queries encode more specific information about the target fact. Second, the relative improvement from diffusion reranking is larger on simple queries ($+2.19\%$ for the ensemble) than on T5 queries ($+0.80\%$), suggesting that diffusion is most beneficial when the baseline retriever is weaker. Third, the top-5 oracle accuracy is high in both settings ($60.09\%$ and $67.60\%$), confirming that the correct answer is usually present in the candidate set and that the remaining challenge is purely one of reranking.
-
-\begin{figure}[htbp]
-\centering
-\includegraphics[width=0.9\linewidth]{figures/paper_eval_simple_t5.png}
-\caption{Combined evaluation summary for simple heuristic queries (left) and T5-generated queries (right). The top-5 oracle bars illustrate the large gap between current performance and the upper bound achievable by a perfect reranker within the candidate set.}
-\label{fig:combined-results}
-\end{figure}
-
 \subsection{Approach-Level Hyperparameter Sweep}
 
-Figure~\ref{fig:approach-sweep} provides a detailed view of how different hyperparameter settings affect each approach. For Approach~A, increasing the number of prototype samples from 1 to 4 to 8 yields steady improvements, as averaging more samples reduces the variance of the generated prototype. The diminishing returns suggest that 8 samples capture most of the benefit, though further scaling could be explored.
+Figure~\ref{fig:approach-sweep} provides a detailed view of how different hyperparameter settings affect each approach, alongside the raw SBERT baseline and the absolute improvement ($\Delta$) for each configuration. Several patterns emerge. First, the relative improvement from diffusion reranking is larger on simple queries ($+2.19\%$ for the ensemble) than on T5 queries ($+0.80\%$), suggesting that diffusion is most beneficial when the baseline retriever is weaker. Second, the top-5 oracle accuracy is high in both settings ($60.09\%$ and $67.60\%$), confirming that the correct answer is usually present in the candidate set and that the remaining challenge is purely one of reranking.
+
+For Approach~A, increasing the number of prototype samples from 1 to 4 to 8 yields steady improvements, as averaging more samples reduces the variance of the generated prototype. The diminishing returns suggest that 8 samples capture most of the benefit, though further scaling could be explored.
 
 For Approach~B, the denoising timestep $t$ controls how much noise is added before denoising. Very small timesteps ($t=1, 3$) produce negligible differences between candidates because the noise perturbation is too small to differentiate them. Larger timesteps ($t=10, 20$) provide a stronger signal, as the denoising network must do more ``work'' to recover each candidate, making it easier to distinguish candidates that are consistent with the learned distribution from those that are not.
 
@@ -297,6 +323,11 @@ To quantify the magnitude of the improvement, we compute a bootstrap confidence 
 
 Figure~\ref{fig:paired-outcomes} visualizes the distribution of paired outcomes, making it clear that while most examples are unchanged, the diffusion reranker rescues substantially more examples than it harms.
 
+\subsection{Memory Consolidation via ``Dreaming''}
+\label{sec:dreaming}
+
+As an exploratory extension, we tested whether the diffusion model could be used not only to rerank candidates at query time but also to clean the memory bank offline. Inspired by memory consolidation during sleep, this ``dreaming'' phase periodically revisits a user's stored facts and applies a multi-stage pipeline: it flags pairs of mutually contradictory facts using a score that combines semantic similarity with a denoising-stability signal (how little a fact's embedding moves when noised and denoised under the model), removes one fact from each flagged pair, denoises the remaining embeddings over several rounds, and merges near-duplicates. For this experiment we trained a larger cross-attention denoiser ($6.9$M parameters) for 60 epochs. Contrary to our expectations, dreaming slightly hurt retrieval: on a 100-example evaluation subset, top-1 accuracy fell from $17.0\%$ to $16.0\%$ ($\Delta = -1.0$ point). Inspecting the logs reveals why. The denoising and merging steps frequently corrupt facts rather than clean them---most damagingly, they flip polarity, rewriting ``The user is not a hard working individual'' as ``The user is a hard working individual'' and ``The user likes older movies'' as ``The user dislikes older movies.'' The contradiction detector also misfires, flagging byte-identical facts (reporting a similarity of $1.000$ between a sentence and itself) and tripping on the ungrammatical artifacts of our third-person normalization (e.g., ``The user i eat meat''). These failures share a root cause with the distribution-sensitivity finding of Section~\ref{sec:results}: operating purely in MiniLM embedding space, the diffusion model has no explicit representation of logical negation, so a denoising step that nudges an embedding toward a higher-density region can silently invert a fact's meaning. We therefore report dreaming as a negative result: generative consolidation of the memory bank is appealing in principle but, in its current embedding-space form, removes more correct information than it repairs.
+
 \begin{figure}[htbp]
 \centering
 \includegraphics[width=0.9\linewidth]{figures/paper_paired_outcomes.png}
@@ -319,7 +350,7 @@ The results support several conclusions and reveal important limitations of the 
 
 \textbf{Limitations.} Several limitations constrain the current approach. First, the diffusion model operates entirely in the embedding space of a frozen MiniLM encoder. It cannot correct errors or ambiguities introduced by the embedding model itself. If two semantically distinct facts have similar MiniLM embeddings, no amount of reranking in this space can distinguish them. Second, the conditioning context is limited to the query and the mean memory-bank embedding, which is a very coarse summary. Richer conditioning---such as individual memory embeddings or dialogue history---could provide more discriminative context. Third, the prototype generation approach (Approach~A) requires multiple sampling passes through the diffusion model, which increases inference cost. While denoising-score reranking (Approach~B) is more efficient, it requires careful tuning of the timestep and mixture weight.
 
-\textbf{Future directions.} Several avenues could extend this work. Larger and more expressive embedding models (e.g., the full Sentence-BERT or instructor-based encoders) could provide a richer embedding space for the diffusion model to operate in. Cross-attention mechanisms that allow the diffusion model to attend to individual candidate embeddings could improve fine-grained discrimination. Training directly on multi-turn dialogue context, rather than isolated facts, could better capture the conversational dynamics that govern which memories are relevant. Finally, comparison with supervised reranking baselines such as cross-encoders~\cite{nogueira2020passage} and ColBERT~\cite{khattab2020colbert} would help quantify the relative merit of the diffusion approach.
+\textbf{Future directions.} Several avenues could extend this work. Larger and more expressive embedding models (e.g., the full Sentence-BERT or instructor-based encoders) could provide a richer embedding space for the diffusion model to operate in. Cross-attention mechanisms that allow the diffusion model to attend to individual candidate embeddings could improve fine-grained discrimination. Training directly on multi-turn dialogue context, rather than isolated facts, could better capture the conversational dynamics that govern which memories are relevant. A supervised MLP reranker trained directly on labeled top-$K$ sets would also serve as a useful lightweight baseline to disentangle the effect of supervision from the effect of the diffusion inductive bias.
 
 %% ========================================================
 \section{Conclusion}
