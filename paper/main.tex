@@ -11,7 +11,7 @@
 \usepackage{float}
 \usepackage[hidelinks]{hyperref}
 
-\title{Diffusion-Based Reranking for Conversational Memory Retrieval}
+\title{Diffusion-Based Reranking for Conversational Memory Retrieval\footnote{Code available at \url{https://github.com/chainerprince/difussed_memory}}}
 \author{
 Medha Ravi \and Otis Otieno Robert \and Ernest Adjetey \and Prince Mutegetsi
 }
@@ -65,7 +65,7 @@ We evaluate two query regimes to test the robustness of our retrieval approach:
 
 \textbf{Simple queries} are heuristic templates produced from the target fact by applying pattern-based transformations. For example, a fact about user preferences generates a query like ``What does the user like?'' while a fact about location generates ``Where does the user live?'' This approach produces a large and consistent training set but may not reflect the diversity of real conversational queries. The simple query setting contains 161,028 examples split into 95,863 training, 31,540 validation, and 33,625 test examples.
 
-\textbf{T5-generated queries} are produced by fine-tuning T5-small~\cite{raffel2020t5} to generate natural-language questions from target facts. For example, given the fact ``The user has two cats,'' T5 might generate ``How many pets does the user own?'' or ``Does the user have any animals?'' These queries are more varied and realistic than heuristic templates, testing whether the reranker generalizes beyond the distribution it was trained on. We use a 500-example test subset for this setting.
+\textbf{T5-generated queries} are produced by prompting a pretrained T5-small model~\cite{raffel2020t5} zero-shot to generate natural-language questions from target facts. For example, given the fact ``The user has two cats,'' T5 might generate ``How many pets does the user own?'' or ``Does the user have any animals?'' These queries are more varied and realistic than heuristic templates, testing whether the reranker generalizes beyond the distribution it was trained on. We use a 500-example test subset for this setting.
 
 All memory facts and queries are embedded using the all-MiniLM-L6-v2 model~\cite{reimers2019sbert}, which produces 384-dimensional sentence embeddings. We chose this model for its balance of speed and quality: it is fast enough to embed large memory banks at inference time while producing embeddings that capture fine-grained semantic distinctions.
 
@@ -131,7 +131,7 @@ Training minimizes the standard DDPM objective:
 \end{equation}
 At each training step, we sample a clean target embedding $x_0$ from the dataset, a random timestep $t \sim \mathrm{Uniform}(1, T)$, and Gaussian noise $\epsilon \sim \mathcal{N}(0, I)$. The model learns to predict $\epsilon$ from the noised embedding, effectively learning to reverse the corruption process.
 
-The implementation uses 384-dimensional MiniLM embeddings, $T=200$ diffusion steps with a linear variance schedule from $\beta_1 = 10^{-4}$ to $\beta_T = 0.02$, and trains for 100 epochs on the simple-query training set. We use the Adam optimizer with a learning rate of $10^{-4}$ and a batch size of 256.
+The implementation uses 384-dimensional MiniLM embeddings, $T=200$ diffusion steps with a linear variance schedule from $\beta_1 = 10^{-4}$ to $\beta_T = 0.02$, and trains for 100 epochs on the simple-query training set. We use the Adam optimizer with a learning rate of $10^{-3}$ and a batch size of 256.
 
 %% ========================================================
 \section{Diffusion Reranking}
@@ -171,7 +171,7 @@ A high denoising score indicates that the candidate was barely perturbed, consis
   s_{\mathrm{final}}(q,m_i) =
   s_{\mathrm{raw}}(q,m_i) + \lambda\, s_{\mathrm{diff}}(m_i,c,t).
 \end{equation}
-We sweep the denoising timestep $t \in \{1, 3, 5, 10, 20\}$ and mixture weight $\lambda \in \{0.25, 0.5, 0.75, 1.0\}$ on the validation set to select the best configuration.
+We sweep the denoising timestep $t \in \{1, 3, 5, 10, 20\}$ and mixture weight $\lambda \in \{0.0, 0.1, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0\}$ on the validation set to select the best configuration.
 
 %% ========================================================
 \section{Results}
@@ -182,7 +182,7 @@ We organize our experimental results around four analyses: (1) the main accuracy
 
 \subsection{Main Results}
 
-Table~\ref{tab:main-results} summarizes the top-1 retrieval accuracy across all evaluated settings. For simple heuristic queries, the raw SBERT baseline achieves $17.84\%$ top-1 accuracy. The strongest diffusion-only configuration is Approach~A with eight prototype samples, which improves accuracy to $19.51\%$---an absolute gain of $+1.67$ percentage points. Approach~B with denoising timestep $t=20$ and mixture weight $\lambda=0.75$ achieves a comparable $19.48\%$. The best overall result on simple queries comes from an ensemble that combines raw similarity, prototype, and denoising signals, reaching $20.03\%$.
+Table~\ref{tab:main-results} summarizes the top-1 retrieval accuracy across all evaluated settings. For simple heuristic queries, the raw SBERT baseline achieves $17.84\%$ top-1 accuracy. The strongest diffusion-only configuration is Approach~A with eight prototype samples, which improves accuracy to $19.51\%$---an absolute gain of $+1.67$ percentage points. Approach~B with denoising timestep $t=20$ and mixture weight $\lambda=0.75$ achieves a comparable $19.48\%$. The best overall result on simple queries comes from an ensemble that combines raw similarity, prototype, and denoising signals, reaching $20.03\%$. For the ensemble and T5 evaluation settings, we use $N=4$ prototype samples to balance performance with inference speed, and combine the scores using fixed mixture weights of $0.5$ for the prototype signal and $0.75$ for the denoising signal.
 
 For T5-generated queries, the landscape changes considerably. Raw SBERT is substantially stronger at $51.60\%$, reflecting the higher quality of natural-language queries compared to heuristic templates. A diffusion model trained on simple queries actually hurts performance on T5 queries (Approach~B drops to $51.40\%$), indicating a distribution mismatch between template-style training data and natural queries. However, retraining the diffusion model on realistic dialogue turns recovers the benefit: the real-turn-trained Approach~B reaches $52.40\%$, a modest but consistent improvement.
 
